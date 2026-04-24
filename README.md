@@ -1,110 +1,229 @@
 # skill-demo-project
 
-A consuming project that demonstrates how a team uses a **centrally managed shared GitHub Copilot skill** and persists enhancement issue links so that every session and every teammate can see what has been requested from the central catalog.
+A **consumer project** that hosts a mock task-management REST API and demonstrates
+how a team uses the shared `task-api-helper` skill from the central catalog
+[tkubica12/skills-demo-catalog](https://github.com/tkubica12/skills-demo-catalog).
+
+It also shows the full **identify → experiment → benchmark → upstream-issue → restore**
+workflow that a team follows when a gap in a shared skill is discovered.
 
 ---
 
-## The Story
+## The Scenario
 
 Your organisation maintains a **central skill catalog** (`tkubica12/skills-demo-catalog`).  
-One of its published skills is `release-readiness-check`, which Copilot uses to verify that a repo is ready to ship (changelog updated, tests passing, docs current, etc.).
+One published skill is `task-api-helper`, which Copilot uses to interact with task
+management APIs.  It exposes three commands:
 
-Individual product teams **install** that skill project-scope instead of copy-pasting it.  
-When a team finds a gap in the shared skill they:
+| Command | What it does |
+|---|---|
+| `task-api-helper list-tasks [--status <s>]` | List tasks (optionally filtered by status) |
+| `task-api-helper get-task <id>` | Fetch details of one task |
+| `task-api-helper add-comment <id> <text>` | Post a comment on a single task |
 
-1. **File an enhancement issue** in the central catalog repo.
-2. **Record the issue link** in this project's `skill-enhancement-tracker.json`.
-3. **Push the updated tracker** so teammates and future Copilot sessions can see the pending request without having to search GitHub.
-4. When the catalog maintainers ship a new skill version, the team **checks** whether tracked requests were resolved and cleans the tracker.
+### The Pain Point – missing `bulk-add-comment`
+
+A recurring workflow is: **"Post a status-update comment on every task whose
+status is `waiting-for-response`."**
+
+With the baseline skill this requires a per-task loop:
+
+```powershell
+foreach ($task in (task-api-helper list-tasks --status waiting-for-response | ConvertFrom-Json)) {
+    task-api-helper add-comment $task.id "Following up – please provide an update."
+}
+```
+
+Every iteration spawns a process, authenticates, and opens a connection.
+With 5+ tasks the latency is noticeable. A `bulk-add-comment` command would
+post all comments in a single process invocation.
 
 ---
 
-## Repository layout
+## How AGENTS.md Drives Automatic Behaviour
+
+`AGENTS.md` at the repo root is the authoritative playbook for any AI agent.
+It instructs the agent to:
+
+1. **Prefer the central skill** – never hard-code workarounds.
+2. **Benchmark the baseline** before touching anything.
+3. **Apply a temporary local experiment** from `experiments/bulk_add_comment/`
+   to prove the improvement is real.
+4. **Benchmark again** and compare.
+5. **File a detailed upstream issue** (not a PR) with benchmark evidence.
+6. **Commit the tracker file** so teammates see the open request.
+7. **Restore the local skill** to pristine state.
+
+When a Copilot agent sees a repetitive multi-call pattern, `AGENTS.md` gives
+it enough context to run the full workflow autonomously.
+
+---
+
+## Manual Trigger Path
+
+Because true custom slash commands are not available, you can trigger the
+workflow manually with the individual scripts below, or by prompting Copilot:
+
+> "Follow the AGENTS.md experiment workflow to file an issue for bulk-add-comment."
+
+---
+
+## Repository Layout
 
 ```
 skill-demo-project/
+├── AGENTS.md                          # agent playbook (read this first)
 ├── README.md
-├── skill-enhancement-tracker.json   # persisted enhancement links (committed)
+├── skill-improvement-log.json         # committed tracker of upstream issues (starts empty)
+├── .gitignore
+├── .github/
+│   ├── copilot-instructions.md
+│   └── instructions/
+│       ├── task-api.instructions.md
+│       └── skill-experiment.instructions.md
+├── api/
+│   ├── server.py                      # Mock Task REST API (Python stdlib)
+│   └── seed_data.json                 # 8 seed tasks, 5 with waiting-for-response
+├── experiments/
+│   └── bulk_add_comment/
+│       └── task_cli_experimental.py   # proof-of-concept CLI with bulk-add-comment
+├── snapshots/                         # gitignored – local skill backups land here
+│   └── .gitkeep
 └── scripts/
-    ├── Install-SharedSkill.ps1        # install the shared skill project-scope
-    ├── New-SkillEnhancement.ps1       # file an issue + persist the link
-    ├── Get-SkillEnhancementStatus.ps1 # check whether tracked issues are resolved
-    └── Remove-SkillEnhancement.ps1    # remove a stale/resolved entry from the tracker
+    ├── Install-SharedSkill.ps1        # gh skill install task-api-helper
+    ├── Start-MockApi.ps1              # launch api/server.py in background
+    ├── Invoke-BaselineScenario.ps1    # painful baseline loop (shows the problem)
+    ├── Apply-LocalExperiment.ps1      # snapshot + patch installed skill
+    ├── Reset-LocalSkill.ps1           # restore from snapshot
+    ├── Invoke-Benchmark.ps1           # before/after timing
+    ├── New-UpstreamIssue.ps1          # gh issue create + update tracker
+    └── Get-IssueStatus.ps1            # check if tracked issues are resolved
 ```
 
 ---
 
-## Quick-start command sequence
+## Prerequisites
 
-### 1 – Install the shared skill (once per clone)
+- [GitHub CLI](https://cli.github.com/) (`gh`) authenticated with `gh auth login`.
+- Python 3.9+ on PATH.
+- PowerShell 7+.
+- Access to `tkubica12/skills-demo-catalog` (read for status checks, write for issues).
+
+---
+
+## Full Demo Command Sequence
+
+### 0 – Install the shared skill (once per clone)
 
 ```powershell
 .\scripts\Install-SharedSkill.ps1
 ```
 
-This calls `gh skill install tkubica12/skills-demo-catalog release-readiness-check` and makes the skill available inside this repo's Copilot sessions.
-
----
-
-### 2 – Request an enhancement in the central catalog
-
-When you (or a Copilot agent) identify a gap:
+### 1 – Start the mock API
 
 ```powershell
-.\scripts\New-SkillEnhancement.ps1 `
-    -Title "Add LICENSE file check to release-readiness-check" `
-    -Body  "The skill currently does not verify that a LICENSE file is present at the repo root."
+.\scripts\Start-MockApi.ps1
+# or in foreground: .\scripts\Start-MockApi.ps1 -Foreground
 ```
 
-This will:
-- Create a GitHub issue in `tkubica12/skills-demo-catalog` labelled `skill-enhancement` and `needs-triage`.
-- Append the issue number, URL, title, skill name, and timestamp to `skill-enhancement-tracker.json`.
-- Print the `git` command to commit and push the updated tracker.
-
-After running the script, commit the tracker:
+The API runs at `http://localhost:8080`.  Verify with:
 
 ```powershell
-git add skill-enhancement-tracker.json
-git commit -m "track: skill enhancement #<N>"
+Invoke-RestMethod http://localhost:8080/health
+```
+
+### 2 – See the baseline scenario in action
+
+```powershell
+.\scripts\Invoke-BaselineScenario.ps1
+```
+
+This loops through all `waiting-for-response` tasks and calls `add-comment` once
+per task – the slow path.
+
+### 3 – Benchmark the baseline
+
+```powershell
+.\scripts\Invoke-Benchmark.ps1 -Phase before
+```
+
+Saves elapsed time to `benchmark-results-before.json`.
+
+### 4 – Apply the local experiment
+
+```powershell
+.\scripts\Apply-LocalExperiment.ps1
+```
+
+Snapshots the installed skill to `snapshots/` (gitignored) and replaces it
+with the experimental CLI that includes `bulk-add-comment`.
+
+### 5 – Run the improved scenario
+
+```powershell
+task-api-helper bulk-add-comment --status waiting-for-response --comment "Following up"
+```
+
+### 6 – Benchmark the experiment
+
+```powershell
+.\scripts\Invoke-Benchmark.ps1 -Phase after
+.\scripts\Invoke-Benchmark.ps1 -Phase compare
+```
+
+### 7 – File the upstream issue with evidence
+
+```powershell
+.\scripts\New-UpstreamIssue.ps1 `
+    -Title "Add bulk-add-comment command to task-api-helper" `
+    -BenchmarkBefore benchmark-results-before.json `
+    -BenchmarkAfter  benchmark-results-after.json
+```
+
+Then commit the tracker:
+
+```powershell
+git add skill-improvement-log.json
+git commit -m "track: upstream issue #<N> – bulk-add-comment request"
 git push
 ```
 
----
-
-### 3 – Check the status of tracked requests
+### 8 – Restore the local skill
 
 ```powershell
-# Just print the status:
-.\scripts\Get-SkillEnhancementStatus.ps1
+.\scripts\Reset-LocalSkill.ps1
+```
 
-# Print AND update the tracker file for resolved issues:
-.\scripts\Get-SkillEnhancementStatus.ps1 -UpdateFile
+Always run this. The experiment is evidence only, not a permanent override.
+
+### 9 – Monitor resolution
+
+When the catalog ships a new version:
+
+```powershell
+.\scripts\Get-IssueStatus.ps1           # see current state of tracked issues
+.\scripts\Install-SharedSkill.ps1       # upgrade to new release
+.\scripts\Get-IssueStatus.ps1 -UpdateFile -AutoClean
+git add skill-improvement-log.json && git commit -m "tracker: resolved issue #<N>" && git push
 ```
 
 ---
 
-### 4 – Remove a tracked request (demo reset / cleanup)
-
-```powershell
-.\scripts\Remove-SkillEnhancement.ps1 -IssueNumber 42
-```
-
-Then commit and push as instructed by the script output.
-
----
-
-## skill-enhancement-tracker.json format
+## skill-improvement-log.json Format
 
 ```json
 {
-  "description": "Tracks enhancement requests submitted to the central skill catalog.",
-  "enhancements": [
+  "description": "...",
+  "skill": "task-api-helper",
+  "catalog_repo": "tkubica12/skills-demo-catalog",
+  "requests": [
     {
       "issue_number": 42,
       "issue_url":    "https://github.com/tkubica12/skills-demo-catalog/issues/42",
-      "title":        "Add LICENSE file check",
-      "skill":        "release-readiness-check",
+      "title":        "Add bulk-add-comment command to task-api-helper",
+      "skill":        "task-api-helper",
       "catalog_repo": "tkubica12/skills-demo-catalog",
+      "enhancement":  "bulk-add-comment",
       "created_at":   "2025-07-01T09:00:00Z",
       "status":       "open"
     }
@@ -112,17 +231,23 @@ Then commit and push as instructed by the script output.
 }
 ```
 
-Fields updated automatically by `Get-SkillEnhancementStatus.ps1 -UpdateFile`:
-
-| Field       | Value when resolved |
-|-------------|---------------------|
-| `status`    | `"resolved"`        |
-| `closed_at` | ISO-8601 timestamp  |
+`Get-IssueStatus.ps1 -UpdateFile` adds `"status": "resolved"` and `"closed_at"` when the catalog closes the issue.
 
 ---
 
-## Prerequisites
+## Mock API Reference
 
-- [GitHub CLI](https://cli.github.com/) (`gh`) authenticated with `gh auth login`.
-- PowerShell 7+ (works on Windows, macOS, Linux).
-- Access to `tkubica12/skills-demo-catalog` (read for status checks, write for new issues).
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `GET` | `/tasks` | List all tasks (supports `?status=<s>`) |
+| `GET` | `/tasks/{id}` | Get one task |
+| `POST` | `/tasks/{id}/comments` | Add a comment `{"text":"..."}` |
+
+Seed data includes 8 tasks: 5 with `waiting-for-response`, 1 `open`, 1 `in-progress`, 1 `resolved`.
+
+Start directly:
+
+```bash
+python api/server.py --port 8080
+```

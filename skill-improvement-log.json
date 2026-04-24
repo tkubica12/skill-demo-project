@@ -1,0 +1,6 @@
+{
+  "description": "Tracks skill improvement requests filed against the central catalog (tkubica12/skills-demo-catalog) for the task-api-helper skill.",
+  "skill": "task-api-helper",
+  "catalog_repo": "tkubica12/skills-demo-catalog",
+  "requests": []
+}

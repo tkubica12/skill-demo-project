@@ -1,0 +1,17 @@
+# Snapshots of installed skill files (local only – never commit originals here)
+snapshots/*
+!snapshots/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Benchmark output
+benchmark-results*.json
+
+# OS
+.DS_Store
+Thumbs.db
