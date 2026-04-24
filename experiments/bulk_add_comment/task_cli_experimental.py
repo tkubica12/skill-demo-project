@@ -92,7 +92,7 @@ def cmd_get_task(api_url: str, task_id: str) -> None:
 def cmd_add_comment(api_url: str, task_id: str, text: str) -> None:
     url = f"{api_url}/tasks/{task_id}/comments"
     try:
-        comment = _post(url, {"message": text})
+        comment = _post(url, {"text": text})
         print(json.dumps(comment, indent=2))
     except urllib.error.HTTPError as e:
         print(f"Error adding comment to {task_id}: {_api_error(e)}", file=sys.stderr)
@@ -122,7 +122,7 @@ def cmd_bulk_add_comment(
     for tid in task_ids:
         url = f"{api_url}/tasks/{tid}/comments"
         try:
-            comment = _post(url, {"message": comment_text})
+            comment = _post(url, {"text": comment_text})
             results.append({"task_id": tid, "comment": comment, "ok": True})
             print(f"  ✓ {tid}", file=sys.stderr)
         except urllib.error.HTTPError as e:
