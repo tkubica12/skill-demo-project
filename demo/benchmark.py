@@ -37,11 +37,16 @@ def _measure_baseline(
     env = {**os.environ, "TASK_API_URL": api_url}
     start = time.monotonic()
     for task in tasks:
-        subprocess.run(
+        result = subprocess.run(
             [python, str(cli_path), "add-comment", task["id"], comment],
             env=env,
             capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"baseline add-comment failed for {task['id']}: {result.stderr.strip()}"
+            )
     return time.monotonic() - start
 
 
@@ -49,7 +54,7 @@ def _measure_bulk(
     api_url: str, status: str, comment: str, cli_path, python: str
 ) -> float:
     start = time.monotonic()
-    subprocess.run(
+    result = subprocess.run(
         [
             python,
             str(cli_path),
@@ -62,7 +67,13 @@ def _measure_bulk(
             api_url,
         ],
         capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "bulk-add-comment failed: "
+            + (result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}")
+        )
     return time.monotonic() - start
 
 
@@ -128,7 +139,11 @@ def main() -> None:
 
     if args.phase == "before":
         print("Timing baseline loop (one CLI process per task) ...")
-        elapsed = _measure_baseline(tasks, api_url, args.comment, cli_path, python)
+        try:
+            elapsed = _measure_baseline(tasks, api_url, args.comment, cli_path, python)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
     else:
         # Verify bulk-add-comment is available (experiment must be applied)
         probe = subprocess.run(
@@ -144,7 +159,11 @@ def main() -> None:
             print("  uv run apply-experiment", file=sys.stderr)
             sys.exit(1)
         print("Timing bulk-add-comment (single invocation) ...")
-        elapsed = _measure_bulk(api_url, args.status, args.comment, cli_path, python)
+        try:
+            elapsed = _measure_bulk(api_url, args.status, args.comment, cli_path, python)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     result = {
         "phase": args.phase,

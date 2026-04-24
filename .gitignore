@@ -2,6 +2,9 @@
 snapshots/*
 !snapshots/.gitkeep
 
+# Installed skills are local-only runtime artifacts
+.agents/
+
 # Python
 __pycache__/
 *.pyc

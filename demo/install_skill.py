@@ -23,7 +23,18 @@ def main() -> None:
 
     print(f"Installing skill '{args.skill_name}' from '{args.catalog_repo}' ...")
     result = subprocess.run(
-        ["gh", "skill", "install", args.catalog_repo, args.skill_name]
+        [
+            "gh",
+            "skill",
+            "install",
+            args.catalog_repo,
+            args.skill_name,
+            "--force",
+            "--scope",
+            "project",
+            "--agent",
+            "github-copilot",
+        ]
     )
     if result.returncode != 0:
         print(

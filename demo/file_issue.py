@@ -128,7 +128,7 @@ requesting project:
             "--body",
             body,
             "--label",
-            "skill-enhancement",
+            "task-api-enhancement",
             "--label",
             "needs-triage",
         ],
