@@ -5,6 +5,7 @@ Endpoints:
   GET  /tasks                    List all tasks (optional ?status=<s>)
   GET  /tasks/<id>               Get one task by ID
   POST /tasks/<id>/comments      Add a comment  { "text": "..." }
+  POST /tasks/bulk-comment       Add the same comment to many tasks
 
 Usage:
   python server.py [--port 8080] [--host 127.0.0.1] [--data seed_data.json]
@@ -120,12 +121,47 @@ class TaskHandler(BaseHTTPRequestHandler):
                 comment = {
                     "id": f"c-{uuid.uuid4().hex[:8]}",
                     "author": body.get("author", "agent"),
-                    "message": text,
+                    "text": text,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 TASKS[task_id].setdefault("comments", []).append(comment)
-                self._send_json(201, comment)
+                self._send_json(200, {"ok": True, "comment_id": comment["id"]})
                 return
+
+        if path == "/tasks/bulk-comment":
+            body = self._read_body()
+            text = (body.get("message") or body.get("text", "")).strip()
+            if not text:
+                self._send_error(400, "'message' (or 'text') field is required")
+                return
+
+            task_ids = body.get("task_ids") or []
+            if not isinstance(task_ids, list):
+                self._send_error(400, "'task_ids' must be a JSON array")
+                return
+
+            updated = []
+            comment_ids = {}
+            for task_id in task_ids:
+                if task_id not in TASKS:
+                    continue
+                comment_id = f"c-{uuid.uuid4().hex[:8]}"
+                TASKS[task_id].setdefault("comments", []).append(
+                    {
+                        "id": comment_id,
+                        "author": body.get("author", "agent"),
+                        "text": text,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                updated.append(task_id)
+                comment_ids[task_id] = comment_id
+
+            self._send_json(
+                200,
+                {"ok": True, "updated": updated, "comment_ids": comment_ids},
+            )
+            return
 
         self._send_error(404, "Not found")
 
