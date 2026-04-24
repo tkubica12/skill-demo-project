@@ -28,20 +28,23 @@ with status `waiting-for-response` so the baseline scenario is demonstrable.
 
 ## Running the Server
 
-```powershell
-.\scripts\Start-MockApi.ps1          # background job, port 8080
+```bash
+# via uv (recommended – multiplatform):
+uv run start-mock-api          # background, port 8080
+uv run start-mock-api --foreground
+
 # or directly:
 python api/server.py --port 8080
 ```
 
 ## Testing Endpoints Manually
 
-```powershell
+```bash
 # List waiting-for-response tasks
-Invoke-RestMethod http://localhost:8080/tasks?status=waiting-for-response
+curl "http://localhost:8080/tasks?status=waiting-for-response"
 
 # Add a comment
-Invoke-RestMethod http://localhost:8080/tasks/task-001/comments `
-    -Method POST -ContentType application/json `
-    -Body '{"text":"Following up."}'
+curl -X POST http://localhost:8080/tasks/task-001/comments \
+     -H "Content-Type: application/json" \
+     -d '{"text":"Following up."}'
 ```

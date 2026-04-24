@@ -1,5 +1,5 @@
 ---
-applyTo: "experiments/**,scripts/Apply-LocalExperiment.ps1,scripts/Reset-LocalSkill.ps1"
+applyTo: "experiments/**,demo/apply_experiment.py,demo/reset_skill.py,scripts/Apply-LocalExperiment.ps1,scripts/Reset-LocalSkill.ps1"
 ---
 # Skill Experiment Instructions
 
@@ -18,15 +18,15 @@ experiments/
 
 ## How the Experiment Works
 
-1. `Apply-LocalExperiment.ps1` snapshots the installed skill entry-point to
+1. `uv run apply-experiment` snapshots the installed skill entry-point to
    `snapshots/<timestamp>_original_task_cli.py` (gitignored) and then
    overwrites it with `experiments/bulk_add_comment/task_cli_experimental.py`.
 
 2. The experimental CLI is fully backward-compatible: it supports all original
    commands (`list-tasks`, `get-task`, `add-comment`) plus adds `bulk-add-comment`.
 
-3. `Reset-LocalSkill.ps1` restores the snapshot. If no snapshot exists it
-   re-runs `Install-SharedSkill.ps1` to re-download a clean copy.
+3. `uv run reset-skill` restores the snapshot. If no snapshot exists it
+   suggests re-running `uv run install-skill` to re-download a clean copy.
 
 ## Constraints
 

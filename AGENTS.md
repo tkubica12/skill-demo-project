@@ -14,18 +14,18 @@ This project hosts a **mock task-management REST API** and consumes the shared
 `gh skill install` places the skill files at:
 
 ```
-.agents\skills\task-api-helper\
+.agents/skills/task-api-helper/
     SKILL.md
-    references\
-    scripts\
+    references/
+    scripts/
         task_cli.py          ← the CLI wrapper — invoke via Python, NOT as a shell command
 ```
 
 The CLI is **NOT** added to PATH. Always invoke it through Python:
 
-```powershell
-$env:TASK_API_URL = "http://localhost:8080"   # or deployed URL
-python ".agents\skills\task-api-helper\scripts\task_cli.py" list-tasks
+```bash
+export TASK_API_URL="http://localhost:8080"   # or deployed URL
+python ".agents/skills/task-api-helper/scripts/task_cli.py" list-tasks
 ```
 
 | Sub-command | Example |
@@ -34,54 +34,50 @@ python ".agents\skills\task-api-helper\scripts\task_cli.py" list-tasks
 | `get-task <id>` | `python task_cli.py get-task task-001` |
 | `add-comment <id> <text>` | `python task_cli.py add-comment task-001 "Ping"` |
 
-Use the helper scripts to resolve the path and URL reliably:
+Use the `uv` entry points to resolve the path and URL reliably:
 
-```powershell
-$cliPath = & .\scripts\Get-SkillCliPath.ps1
-$apiUrl  = & .\scripts\Get-TaskApiUrl.ps1
-if (-not $cliPath) { exit 1 }
-$env:TASK_API_URL = $apiUrl
-python $cliPath list-tasks
+```bash
+API_URL=$(uv run get-api-url)
+uv run run-baseline --api-url "$API_URL"
 ```
 
 ---
 
 ## API URL Configuration
 
-All scripts resolve the Task API endpoint via a shared helper
-(`scripts\Get-TaskApiUrl.ps1`) using this priority order:
+All `uv run` commands resolve the Task API endpoint using this priority order:
 
 | Source | Value |
 |---|---|
-| `TASK_API_URL` env var | Your deployed Azure Container App URL or any custom endpoint |
+| `--api-url` flag | Explicit override for that invocation |
+| `TASK_API_URL` env var | Deployed Azure Container App URL or any custom endpoint |
 | Default (fallback) | `http://localhost:8080` (local mock server) |
 
 ### Local development (mock API)
 
-```powershell
-# Start the local mock server
-.\scripts\Start-MockApi.ps1
+```bash
+# Start the local mock server (background)
+uv run start-mock-api
 
-# No env var needed – scripts automatically fall back to http://localhost:8080
-.\scripts\Invoke-BaselineScenario.ps1
+# TASK_API_URL not required – commands fall back to http://localhost:8080
+uv run run-baseline
 ```
 
-### Deployed Azure Container App
+### Deployed Azure Container App (preferred demo path)
 
-```powershell
-# Set once per session (or persist in your profile)
-$env:TASK_API_URL = "https://<your-app>.azurecontainerapps.io"
+```bash
+export TASK_API_URL="https://<your-app>.azurecontainerapps.io"
 
-# All scripts now target the deployed endpoint automatically
-.\scripts\Invoke-BaselineScenario.ps1
-.\scripts\Invoke-Benchmark.ps1 -Phase before
+# All commands now target the deployed endpoint automatically
+uv run run-baseline
+uv run benchmark --phase before
 ```
 
-You can also pass `-ApiUrl` explicitly to any script to override both the env
-var and the default:
+You can also pass `--api-url` explicitly to any command to override both the
+env var and the default:
 
-```powershell
-.\scripts\Invoke-BaselineScenario.ps1 -ApiUrl "https://<your-app>.azurecontainerapps.io"
+```bash
+uv run run-baseline --api-url "https://<your-app>.azurecontainerapps.io"
 ```
 
 ---
@@ -93,12 +89,14 @@ whose status is `waiting-for-response`."**
 
 With the current skill this requires a loop:
 
-```powershell
-$cliPath = ".agents\skills\task-api-helper\scripts\task_cli.py"
-$env:TASK_API_URL = & .\scripts\Get-TaskApiUrl.ps1
-foreach ($task in (Invoke-RestMethod "$env:TASK_API_URL/tasks?status=waiting-for-response")) {
-    python $cliPath add-comment $task.id "Following up – please provide an update."
-}
+```python
+import json, os, subprocess, urllib.request
+cli = ".agents/skills/task-api-helper/scripts/task_cli.py"
+tasks = json.loads(
+    urllib.request.urlopen("http://localhost:8080/tasks?status=waiting-for-response").read()
+)
+for task in tasks:
+    subprocess.run(["python", cli, "add-comment", task["id"], "Following up."])
 ```
 
 Every iteration spawns a new Python process, pays startup overhead, opens a TCP
@@ -111,9 +109,9 @@ a status filter or explicit IDs and posts all comments in one session.
 
 ## Normal Workflow (prefer the central skill)
 
-1. Install the skill:     `.\scripts\Install-SharedSkill.ps1`
-2. Start the mock API:    `.\scripts\Start-MockApi.ps1` *(or set `TASK_API_URL` for deployed)*
-3. Use the CLI via Python (`$cliPath = & .\scripts\Get-SkillCliPath.ps1`).
+1. Install the skill:     `uv run install-skill`
+2. Start the mock API:    `uv run start-mock-api` *(or set `TASK_API_URL` for deployed)*
+3. Use the CLI via Python (path: `.agents/skills/task-api-helper/scripts/task_cli.py`).
 4. If you find a gap or pain point, **do not edit the installed skill directly**.
    Instead follow the Experiment & Issue workflow below.
 
@@ -126,8 +124,8 @@ not support well, follow these steps **in order**:
 
 ### Step 1 – Run the baseline benchmark
 
-```powershell
-.\scripts\Invoke-Benchmark.ps1 -Phase before
+```bash
+uv run benchmark --phase before
 ```
 
 This times the per-task CLI loop (one Python process per task) and saves results
@@ -135,14 +133,14 @@ to `benchmark-results-before.json`.
 
 ### Step 2 – Apply the local experiment
 
-```powershell
-.\scripts\Apply-LocalExperiment.ps1
+```bash
+uv run apply-experiment
 ```
 
-This script:
+This command:
 - Requires the skill to be installed (fails with a clear message if not).
 - Snapshots the currently installed `task_cli.py` to `snapshots/` (gitignored).
-- Copies `experiments\bulk_add_comment\task_cli_experimental.py` over the
+- Copies `experiments/bulk_add_comment/task_cli_experimental.py` over the
   installed skill entry-point so the new `bulk-add-comment` sub-command is
   available.
 
@@ -150,30 +148,29 @@ This script:
 
 ### Step 3 – Run the after benchmark
 
-```powershell
-.\scripts\Invoke-Benchmark.ps1 -Phase after
+```bash
+uv run benchmark --phase after
 ```
 
-Saves results to `benchmark-results-after.json` and prints a side-by-side
-comparison.
+Saves results to `benchmark-results-after.json`.
 
 ### Step 4 – File an upstream issue
 
-```powershell
-.\scripts\New-UpstreamIssue.ps1 `
-    -Title "Add bulk-add-comment command to task-api-helper" `
-    -BenchmarkBefore benchmark-results-before.json `
-    -BenchmarkAfter  benchmark-results-after.json
+```bash
+uv run file-issue \
+    --title "Add bulk-add-comment command to task-api-helper" \
+    --benchmark-before benchmark-results-before.json \
+    --benchmark-after  benchmark-results-after.json
 ```
 
-This script:
+This command:
 - Creates a detailed GitHub issue in `tkubica12/skills-demo-catalog` with
   benchmark data, motivation, and the experimental implementation as evidence.
 - Appends the issue ID, URL, and metadata to `skill-improvement-log.json`.
 
-**Commit and push the tracker after running the script:**
+**Commit and push the tracker after running the command:**
 
-```powershell
+```bash
 git add skill-improvement-log.json
 git commit -m "track: upstream issue #<N> – bulk-add-comment request"
 git push
@@ -181,8 +178,8 @@ git push
 
 ### Step 5 – Restore the local skill
 
-```powershell
-.\scripts\Reset-LocalSkill.ps1
+```bash
+uv run reset-skill
 ```
 
 Restores the installed skill from the snapshot.
@@ -190,17 +187,17 @@ Restores the installed skill from the snapshot.
 
 ### Step 6 – Monitor resolution
 
-```powershell
-.\scripts\Get-IssueStatus.ps1
+```bash
+uv run check-issues
 ```
 
 Checks whether any tracked issues in `skill-improvement-log.json` have been
 closed. When the catalog ships a new release that includes `bulk-add-comment`,
 re-run:
 
-```powershell
-.\scripts\Install-SharedSkill.ps1   # upgrade to the new release
-.\scripts\Get-IssueStatus.ps1 -UpdateFile -AutoClean
+```bash
+uv run install-skill            # upgrade to the new release
+uv run check-issues --update-file --auto-clean
 git add skill-improvement-log.json && git commit -m "tracker: resolved issue #<N>" && git push
 ```
 
@@ -210,8 +207,7 @@ git add skill-improvement-log.json && git commit -m "tracker: resolved issue #<N
 
 - **Prefer the central skill.** Local overrides are temporary evidence only.
 - **The CLI is not a shell command.** Always invoke via `python task_cli.py ...`.
-- **Use `Get-SkillCliPath.ps1`** to resolve the canonical CLI path.
-- **Use `Get-TaskApiUrl.ps1`** to resolve the active API URL (local or deployed).
+- **Use `uv run get-api-url`** to resolve the canonical API URL.
 - **Set `TASK_API_URL`** to switch from local mock to a deployed endpoint.
 - **Benchmark before and after.** Numbers justify the upstream issue.
 - **File an issue, not a PR.** The catalog has maintainers; respect their process.
@@ -223,44 +219,48 @@ git add skill-improvement-log.json && git commit -m "tracker: resolved issue #<N
 
 ## Quick Reference: Full Demo Sequence
 
-```powershell
+```bash
 # 0. Install the shared skill (once per clone)
-.\scripts\Install-SharedSkill.ps1
+uv run install-skill
 
-# 1a. Local dev: start the mock API in a background job
-.\scripts\Start-MockApi.ps1
+# 1a. Local dev: start the mock API in the background
+uv run start-mock-api
 
 # 1b. OR point at the deployed Azure Container App
-$env:TASK_API_URL = "https://<your-app>.azurecontainerapps.io"
+export TASK_API_URL="https://<your-app>.azurecontainerapps.io"
 
 # 2. Run the painful baseline scenario (shows the problem)
-#    Scripts automatically use TASK_API_URL if set, or localhost:8080 as fallback
-.\scripts\Invoke-BaselineScenario.ps1
+uv run run-baseline
 
 # 3. Benchmark the baseline (one CLI process per task)
-.\scripts\Invoke-Benchmark.ps1 -Phase before
+uv run benchmark --phase before
 
 # 4. Apply local experiment (overwrites installed task_cli.py reversibly)
-.\scripts\Apply-LocalExperiment.ps1
+uv run apply-experiment
 
 # 5. Run the experiment scenario (shows the improvement)
-$cliPath = ".agents\skills\task-api-helper\scripts\task_cli.py"
-$apiUrl  = & .\scripts\Get-TaskApiUrl.ps1
-python $cliPath bulk-add-comment --status waiting-for-response --comment "Following up" --api-url $apiUrl
+CLI=".agents/skills/task-api-helper/scripts/task_cli.py"
+python "$CLI" bulk-add-comment --status waiting-for-response \
+    --comment "Following up" --api-url "$(uv run get-api-url | tail -1)"
 
 # 6. Benchmark the experiment
-.\scripts\Invoke-Benchmark.ps1 -Phase after
-.\scripts\Invoke-Benchmark.ps1 -Phase compare
+uv run benchmark --phase after
+uv run benchmark --phase compare
 
 # 7. File upstream issue with evidence
-.\scripts\New-UpstreamIssue.ps1 -Title "Add bulk-add-comment to task-api-helper" `
-    -BenchmarkBefore benchmark-results-before.json `
-    -BenchmarkAfter  benchmark-results-after.json
+uv run file-issue \
+    --title "Add bulk-add-comment to task-api-helper" \
+    --benchmark-before benchmark-results-before.json \
+    --benchmark-after  benchmark-results-after.json
 
 # 8. Commit the tracker
 git add skill-improvement-log.json && git commit -m "track: upstream issue" && git push
 
 # 9. Restore local skill to pristine state
-.\scripts\Reset-LocalSkill.ps1
+uv run reset-skill
 ```
+
+> **PowerShell users:** equivalent `.ps1` scripts remain in `scripts/` for
+> compatibility, but the `uv run` commands above are the canonical multiplatform
+> interface.
 

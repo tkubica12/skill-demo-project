@@ -1,219 +1,211 @@
-#!/usr/bin/env python3
-"""Command-line wrapper for the shared Task API REST service."""
+"""
+Experimental task-api-helper CLI – drop-in replacement for the installed skill.
 
-# bulk-add-comment is intentionally absent — see IMPROVEMENT-PROCESS.md
+Adds `bulk-add-comment` on top of the three baseline commands.
+This file lives in experiments/bulk_add_comment/ and is copied over the installed
+skill entry-point by Apply-LocalExperiment.ps1.
 
-from __future__ import annotations
+IMPORTANT: This is temporary evidence for an upstream issue, NOT a permanent fix.
+           Always run Reset-LocalSkill.ps1 after benchmarking to restore the
+           original installed skill.
+
+Usage (after Apply-LocalExperiment.ps1 has activated it):
+  task-api-helper list-tasks [--status <status>] [--api-url <url>]
+  task-api-helper get-task   <id>               [--api-url <url>]
+  task-api-helper add-comment <id> <text>        [--api-url <url>]
+  task-api-helper bulk-add-comment               [--api-url <url>]
+                     (--ids <id1> [<id2>...] | --status <status>)
+                     --comment <text>
+"""
 
 import argparse
 import json
 import os
 import sys
-from typing import Any
-from urllib import error, parse, request
+import urllib.error
+import urllib.request
+from typing import Optional
 
-DEFAULT_TIMEOUT_SECONDS = 30
+DEFAULT_API_URL = "http://localhost:8080"
 
+
+def _resolve_api_url(cli_arg: str) -> str:
+    """Return the API URL: CLI flag > TASK_API_URL env > TASK_API_BASE_URL env > default."""
+    if cli_arg and cli_arg != DEFAULT_API_URL:
+        return cli_arg.rstrip("/")
+    env = (os.getenv("TASK_API_URL") or os.getenv("TASK_API_BASE_URL", "")).strip().rstrip("/")
+    return env if env else DEFAULT_API_URL
+
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+def _get(url: str) -> dict | list:
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def _post(url: str, payload: dict) -> dict:
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def _api_error(e: urllib.error.HTTPError) -> str:
+    try:
+        body = json.loads(e.read())
+        return body.get("error", str(e))
+    except Exception:
+        return str(e)
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_list_tasks(api_url: str, status: Optional[str]) -> None:
+    url = f"{api_url}/tasks"
+    if status:
+        url += f"?status={status}"
+    tasks = _get(url)
+    print(json.dumps(tasks, indent=2))
+
+
+def cmd_get_task(api_url: str, task_id: str) -> None:
+    url = f"{api_url}/tasks/{task_id}"
+    try:
+        task = _get(url)
+        print(json.dumps(task, indent=2))
+    except urllib.error.HTTPError as e:
+        print(f"Error: {_api_error(e)}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_add_comment(api_url: str, task_id: str, text: str) -> None:
+    url = f"{api_url}/tasks/{task_id}/comments"
+    try:
+        comment = _post(url, {"text": text})
+        print(json.dumps(comment, indent=2))
+    except urllib.error.HTTPError as e:
+        print(f"Error adding comment to {task_id}: {_api_error(e)}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_bulk_add_comment(
+    api_url: str,
+    task_ids: list[str],
+    status_filter: Optional[str],
+    comment_text: str,
+) -> None:
+    """
+    Add the same comment to multiple tasks in a single process invocation.
+    Either pass explicit --ids or --status to derive the list automatically.
+    """
+    if status_filter and not task_ids:
+        tasks = _get(f"{api_url}/tasks?status={status_filter}")
+        task_ids = [t["id"] for t in tasks]
+
+    if not task_ids:
+        print("No tasks to comment on.", file=sys.stderr)
+        sys.exit(1)
+
+    results = []
+    errors = []
+    for tid in task_ids:
+        url = f"{api_url}/tasks/{tid}/comments"
+        try:
+            comment = _post(url, {"text": comment_text})
+            results.append({"task_id": tid, "comment": comment, "ok": True})
+            print(f"  ✓ {tid}", file=sys.stderr)
+        except urllib.error.HTTPError as e:
+            msg = _api_error(e)
+            errors.append({"task_id": tid, "error": msg})
+            print(f"  ✗ {tid}: {msg}", file=sys.stderr)
+
+    summary = {
+        "total": len(task_ids),
+        "succeeded": len(results),
+        "failed": len(errors),
+        "results": results,
+        "errors": errors,
+    }
+    print(json.dumps(summary, indent=2))
+    if errors:
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    shared = argparse.ArgumentParser(add_help=False)
-    shared.add_argument("--api-url", dest="api_url", help="Override TASK_API_URL for this command.")
-    shared.add_argument("--base-url", dest="base_url", help="Deprecated alias for --api-url.")
-    shared.add_argument("--token", help="Override TASK_API_TOKEN for this command.")
+    # Shared parent so --api-url is accepted both before AND after the subcommand.
+    url_parent = argparse.ArgumentParser(add_help=False)
+    url_parent.add_argument("--api-url", default=DEFAULT_API_URL, help="Base URL of the Task API")
 
     parser = argparse.ArgumentParser(
-        description="Interact with the shared Task API service."
+        prog="task-api-helper",
+        description="CLI for the Task API  (experimental: includes bulk-add-comment)",
+        parents=[url_parent],
     )
-    subparsers = parser.add_subparsers(dest="command")
 
-    list_parser = subparsers.add_parser(
-        "list-tasks",
-        parents=[shared],
-        help="List tasks from the Task API.",
-    )
-    list_parser.add_argument(
-        "--status",
-        choices=["open", "closed", "all"],
-        default="open",
-        help="Filter tasks by status (default: open).",
-    )
-    list_parser.add_argument("--project", help="Filter tasks by project identifier.")
-    list_parser.add_argument(
-        "--format",
-        choices=["json", "ids"],
-        default="json",
-        help="Output full JSON or just task IDs.",
-    )
-    list_parser.set_defaults(handler=handle_list_tasks)
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    get_parser = subparsers.add_parser(
-        "get-task",
-        parents=[shared],
-        help="Fetch a single task and its comment thread.",
-    )
-    get_parser.add_argument("task_id", help="Task identifier, for example task-123.")
-    get_parser.set_defaults(handler=handle_get_task)
+    # list-tasks
+    p_list = sub.add_parser("list-tasks", help="List tasks", parents=[url_parent])
+    p_list.add_argument("--status", help="Filter by status")
 
-    comment_parser = subparsers.add_parser(
-        "add-comment",
-        parents=[shared],
-        help="Append a comment to a task.",
-    )
-    comment_parser.add_argument("task_id", help="Task identifier to update.")
-    comment_parser.add_argument("text", nargs="?", default=None, help="Comment text (positional).")
-    comment_parser.add_argument(
-        "--message",
-        default=None,
-        help="Comment text (deprecated alias for positional argument).",
-    )
-    comment_parser.set_defaults(handler=handle_add_comment)
+    # get-task
+    p_get = sub.add_parser("get-task", help="Get a single task", parents=[url_parent])
+    p_get.add_argument("id", help="Task ID")
+
+    # add-comment
+    p_comment = sub.add_parser("add-comment", help="Add a comment to a task", parents=[url_parent])
+    p_comment.add_argument("id", help="Task ID")
+    p_comment.add_argument("text", help="Comment text")
+
+    # bulk-add-comment  (EXPERIMENTAL – the new command)
+    p_bulk = sub.add_parser("bulk-add-comment", help="[EXPERIMENTAL] Add a comment to multiple tasks", parents=[url_parent])
+    group = p_bulk.add_mutually_exclusive_group(required=True)
+    group.add_argument("--ids", nargs="+", metavar="ID", help="Explicit task IDs")
+    group.add_argument("--status", help="Derive task IDs from status filter")
+    p_bulk.add_argument("--comment", required=True, help="Comment text to post")
 
     return parser
 
 
-def resolve_base_url(args: argparse.Namespace) -> str:
-    # --api-url takes precedence; --base-url is a deprecated alias
-    explicit = getattr(args, "api_url", None) or getattr(args, "base_url", None)
-    # TASK_API_URL is canonical; TASK_API_BASE_URL is a deprecated fallback
-    env_url = os.getenv("TASK_API_URL") or os.getenv("TASK_API_BASE_URL", "")
-    base_url = (explicit or env_url).strip()
-    if not base_url:
-        raise ValueError(
-            "TASK_API_URL is not set.\n"
-            "  Local mock:  export TASK_API_URL=http://localhost:8080\n"
-            "  Deployed:    export TASK_API_URL=https://<app>.azurecontainerapps.io\n"
-            "Or pass --api-url <url> on the command line."
-        )
-    return base_url.rstrip("/")
-
-
-def resolve_token(args: argparse.Namespace) -> str:
-    return (getattr(args, "token", None) or os.getenv("TASK_API_TOKEN", "")).strip()
-
-
-def pretty_print(payload: Any) -> None:
-    print(json.dumps(payload, indent=2, sort_keys=True))
-
-
-def decode_response(response: Any) -> Any:
-    body = response.read().decode("utf-8")
-    if not body:
-        return None
-    return json.loads(body)
-
-
-def request_json(
-    args: argparse.Namespace,
-    method: str,
-    path: str,
-    query: dict[str, Any] | None = None,
-    payload: dict[str, Any] | None = None,
-) -> Any:
-    base_url = resolve_base_url(args)
-    cleaned_query = {
-        key: value
-        for key, value in (query or {}).items()
-        if value is not None and value != ""
-    }
-    url = f"{base_url}{path}"
-    if cleaned_query:
-        url = f"{url}?{parse.urlencode(cleaned_query)}"
-
-    headers = {"Accept": "application/json"}
-    token = resolve_token(args)
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    data = None
-    if payload is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(payload).encode("utf-8")
-
-    http_request = request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with request.urlopen(http_request, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
-            return decode_response(response)
-    except error.HTTPError as exc:
-        message = exc.read().decode("utf-8", errors="replace")
-        try:
-            parsed_body = json.loads(message) if message else {"error": exc.reason}
-            formatted_body = json.dumps(parsed_body, indent=2, sort_keys=True)
-        except json.JSONDecodeError:
-            formatted_body = message or str(exc.reason)
-        print(f"HTTP {exc.code}: {formatted_body}", file=sys.stderr)
-        raise SystemExit(1) from exc
-    except error.URLError as exc:
-        print(f"Request failed: {exc.reason}", file=sys.stderr)
-        raise SystemExit(1) from exc
-
-
-def handle_list_tasks(args: argparse.Namespace) -> int:
-    response = request_json(
-        args,
-        "GET",
-        "/tasks",
-        query={
-            "status": args.status,
-            "project": args.project,
-            "format": args.format if args.format == "ids" else None,
-        },
-    )
-    if args.format == "ids":
-        if isinstance(response, list):
-            for item in response:
-                if isinstance(item, dict):
-                    print(item.get("id", ""))
-                else:
-                    print(item)
-            return 0
-        if isinstance(response, dict) and isinstance(response.get("ids"), list):
-            for task_id in response["ids"]:
-                print(task_id)
-            return 0
-        print("Unexpected response for --format ids", file=sys.stderr)
-        return 1
-
-    pretty_print(response)
-    return 0
-
-
-def handle_get_task(args: argparse.Namespace) -> int:
-    response = request_json(args, "GET", f"/tasks/{parse.quote(args.task_id)}")
-    pretty_print(response)
-    return 0
-
-
-def handle_add_comment(args: argparse.Namespace) -> int:
-    text = getattr(args, "text", None) or getattr(args, "message", None)
-    if not text:
-        print(
-            "Error: provide comment text as a positional argument:\n"
-            "  python task_cli.py add-comment <task_id> <text>",
-            file=sys.stderr,
-        )
-        return 2
-    response = request_json(
-        args,
-        "POST",
-        f"/tasks/{parse.quote(args.task_id)}/comments",
-        payload={"message": text},
-    )
-    pretty_print(response)
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
+def main() -> None:
     parser = build_parser()
-    args = parser.parse_args(argv)
-    if not hasattr(args, "handler"):
-        parser.print_help()
-        return 1
+    args = parser.parse_args()
+
+    api_url = _resolve_api_url(args.api_url)
+
     try:
-        return int(args.handler(args))
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
+        if args.command == "list-tasks":
+            cmd_list_tasks(api_url, getattr(args, "status", None))
+        elif args.command == "get-task":
+            cmd_get_task(api_url, args.id)
+        elif args.command == "add-comment":
+            cmd_add_comment(api_url, args.id, args.text)
+        elif args.command == "bulk-add-comment":
+            cmd_bulk_add_comment(
+                api_url,
+                getattr(args, "ids", None) or [],
+                getattr(args, "status", None),
+                args.comment,
+            )
+    except urllib.error.URLError as e:
+        print(f"Connection error: {e}  (is the API running?)", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
