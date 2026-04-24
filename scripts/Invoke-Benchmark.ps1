@@ -148,7 +148,7 @@ if ($Phase -eq "before") {
     }
     $pyExe = Get-Python
     # Verify bulk-add-comment is available (i.e. experiment has been applied)
-    $helpOutput = & $pyExe $cliPath bulk-add-comment --help 2>&1
+    $helpOutput = (& $pyExe $cliPath bulk-add-comment --help 2>&1 | Out-String)
     if ($LASTEXITCODE -ne 0 -or ($helpOutput -notmatch "bulk-add-comment")) {
         Write-Error @"
 bulk-add-comment not found in the installed CLI.
