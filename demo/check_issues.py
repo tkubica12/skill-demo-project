@@ -15,6 +15,61 @@ import sys
 from demo._common import repo_root
 
 
+def find_release_for_issue(catalog_repo: str, issue_number: int) -> dict | None:
+    """Return the first release whose notes mention the given issue number."""
+    try:
+        release_list = subprocess.run(
+            [
+                "gh",
+                "release",
+                "list",
+                "--repo",
+                catalog_repo,
+                "--json",
+                "tagName,publishedAt",
+                "--limit",
+                "50",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        releases = json.loads(release_list.stdout)
+    except Exception:
+        return None
+
+    patterns = (f"#{issue_number}", f"/{issue_number}")
+    for release_stub in sorted(releases, key=lambda r: r.get("publishedAt") or ""):
+        tag = release_stub.get("tagName")
+        if not tag:
+            continue
+        try:
+            release_view = subprocess.run(
+                [
+                    "gh",
+                    "release",
+                    "view",
+                    tag,
+                    "--repo",
+                    catalog_repo,
+                    "--json",
+                    "tagName,name,body,publishedAt",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            release = json.loads(release_view.stdout)
+        except Exception:
+            continue
+
+        haystack = f"{release.get('name', '')}\n{release.get('body', '')}"
+        if any(pattern in haystack for pattern in patterns):
+            return release
+
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Check GitHub state of issues in skill-improvement-log.json."
@@ -71,11 +126,23 @@ def main() -> None:
         symbol = {"OPEN": "\U0001f534", "CLOSED": "\u2705"}.get(state, "\u2753")
         print(f"{symbol}  #{req['issue_number']} [{req['status']}] \u2013 {req['title']}")
         print(f"     {req['issue_url']}")
-        print(f"     GitHub state: {state}\n")
+        print(f"     GitHub state: {state}")
+
+        release = None
+        if state == "CLOSED":
+            release = find_release_for_issue(req["catalog_repo"], req["issue_number"])
+            if release:
+                print(
+                    f"     Fixed in release: {release.get('tagName')} "
+                    f"({release.get('publishedAt', 'unknown date')})"
+                )
+        print("")
 
         if args.update_file and state == "CLOSED" and req.get("status") != "resolved":
             req["status"] = "resolved"
             req["closed_at"] = closed_at
+            if release:
+                req["fixed_in_release"] = release.get("tagName")
             changed = True
             print("  \u2192 Marked resolved in tracker.")
 
