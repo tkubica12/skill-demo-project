@@ -32,7 +32,7 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "Installing shared skill '$SkillName' from '$CatalogRepo' ..." -ForegroundColor Cyan
 
-gh skill install "$CatalogRepo/$SkillName"
+gh skill install $CatalogRepo $SkillName
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "gh skill install failed (exit code $LASTEXITCODE)."

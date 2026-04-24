@@ -4,9 +4,11 @@
     central catalog and reports which ones have been resolved (closed).
 
 .DESCRIPTION
-    Reads skill-enhancement-tracker.json, queries GitHub for the current status
-    of each tracked issue, and prints a summary. Optionally updates the status
-    field in the tracker file to reflect resolved items.
+    Reads skill-enhancement-tracker.json, queries GitHub for the current state
+    of each tracked issue, and prints a summary. For closed issues it also
+    scans catalog releases to identify which release likely contains the fix
+    (by searching release notes for the issue number).
+    Optionally updates the status field in the tracker file to reflect resolved items.
 
 .PARAMETER CatalogRepo
     Central catalog repository. Default: tkubica12/skills-demo-catalog
@@ -44,6 +46,32 @@ if ($tracker.enhancements.Count -eq 0) {
     exit 0
 }
 
+# Fetch catalog releases once (best-effort; skip if gh fails or repo has none)
+$catalogReleases = @()
+try {
+    $relJson = gh release list --repo $CatalogRepo --json "tagName,name,body,publishedAt" --limit 50 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $catalogReleases = $relJson | ConvertFrom-Json
+    }
+} catch {
+    # Non-fatal: release scanning is best-effort
+}
+
+function Find-ReleaseForIssue {
+    param([int]$IssueNumber, [array]$Releases)
+    # Search release notes (body) and name for a reference to the issue number
+    $patterns = @("#$IssueNumber", "/$IssueNumber")
+    foreach ($rel in ($Releases | Sort-Object publishedAt)) {
+        $haystack = "$($rel.name) $($rel.body)"
+        foreach ($p in $patterns) {
+            if ($haystack -match [regex]::Escape($p)) {
+                return $rel
+            }
+        }
+    }
+    return $null
+}
+
 Write-Host "`nSkill Enhancement Request Status" -ForegroundColor Cyan
 Write-Host ("=" * 60)
 
@@ -57,21 +85,30 @@ foreach ($entry in $tracker.enhancements) {
     $state    = $issueData.state      # OPEN or CLOSED
     $closedAt = $issueData.closedAt
 
-    $statusDisplay = if ($state -eq "CLOSED") {
-        "RESOLVED (closed $closedAt)"
-    } else {
-        "OPEN"
-    }
-
     $color = if ($state -eq "CLOSED") { "Green" } else { "Yellow" }
     Write-Host "`n  Issue #$($entry.issue_number): $($entry.title)" -ForegroundColor $color
-    Write-Host "  Status : $statusDisplay"
+    Write-Host "  State  : $state"
     Write-Host "  URL    : $($entry.issue_url)"
 
-    if ($UpdateFile -and $state -eq "CLOSED" -and $entry.status -ne "resolved") {
-        $entry.status    = "resolved"
-        $entry.closed_at = $closedAt
-        $anyChanges      = $true
+    if ($state -eq "CLOSED") {
+        Write-Host "  Closed : $closedAt"
+
+        # Try to identify which catalog release contains the fix
+        $fixRelease = Find-ReleaseForIssue -IssueNumber $entry.issue_number -Releases $catalogReleases
+        if ($fixRelease) {
+            Write-Host "  Fixed in release: $($fixRelease.tagName) – $($fixRelease.name) (published $($fixRelease.publishedAt))" -ForegroundColor Green
+        } else {
+            Write-Host "  Fixed in release: not detected in release notes" -ForegroundColor DarkYellow
+        }
+
+        if ($UpdateFile -and $entry.status -ne "resolved") {
+            $entry.status    = "resolved"
+            $entry.closed_at = $closedAt
+            if ($fixRelease) {
+                $entry.fixed_in_release = $fixRelease.tagName
+            }
+            $anyChanges = $true
+        }
     }
 }
 

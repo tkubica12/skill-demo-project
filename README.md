@@ -42,7 +42,7 @@ skill-demo-project/
 .\scripts\Install-SharedSkill.ps1
 ```
 
-This calls `gh skill install tkubica12/skills-demo-catalog/release-readiness-check` and makes the skill available inside this repo's Copilot sessions.
+This calls `gh skill install tkubica12/skills-demo-catalog release-readiness-check` and makes the skill available inside this repo's Copilot sessions.
 
 ---
 
