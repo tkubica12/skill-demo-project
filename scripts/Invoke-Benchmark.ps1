@@ -30,7 +30,7 @@
 param(
     [ValidateSet("before","after","compare")]
     [string]$Phase   = "before",
-    [string]$ApiUrl  = "http://localhost:8080",
+    [string]$ApiUrl  = "",
     [string]$Status  = "waiting-for-response",
     [string]$Comment = "Benchmark ping"
 )
@@ -39,6 +39,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# Resolve API URL: explicit param → TASK_API_URL env → local mock fallback
+if (-not $ApiUrl -and $Phase -ne "compare") {
+    $ApiUrl = & (Join-Path $PSScriptRoot "Get-TaskApiUrl.ps1")
+}
 
 # ------------------------------------------------------------------
 # Shared helpers
@@ -64,10 +69,10 @@ function Measure-Baseline {
         [string] $CliPath,
         [string] $PythonExe
     )
-    $env:TASK_API_BASE_URL = $ApiUrl
+    $env:TASK_API_URL = $ApiUrl
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     foreach ($task in $Tasks) {
-        & $PythonExe $CliPath add-comment $task.id --message $Comment | Out-Null
+        & $PythonExe $CliPath add-comment $task.id $Comment | Out-Null
     }
     $sw.Stop()
     return $sw.Elapsed.TotalSeconds

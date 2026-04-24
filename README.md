@@ -25,7 +25,7 @@ It exposes three commands — invoked via Python, **not** as a global shell comm
 |---|---|
 | `python task_cli.py list-tasks [--status <s>]` | List tasks (optionally filtered by status) |
 | `python task_cli.py get-task <id>` | Fetch details of one task |
-| `python task_cli.py add-comment <id> --message <text>` | Post a comment on a single task |
+| `python task_cli.py add-comment <id> <text>` | Post a comment on a single task |
 
 ### The Pain Point – missing `bulk-add-comment`
 
@@ -36,9 +36,9 @@ With the baseline skill this requires a per-task loop:
 
 ```powershell
 $cliPath = ".agents\skills\task-api-helper\scripts\task_cli.py"
-$env:TASK_API_BASE_URL = "http://localhost:8080"
-foreach ($task in (Invoke-RestMethod "http://localhost:8080/tasks?status=waiting-for-response")) {
-    python $cliPath add-comment $task.id --message "Following up – please provide an update."
+$env:TASK_API_URL = "http://localhost:8080"   # or set to deployed URL
+foreach ($task in (Invoke-RestMethod "$env:TASK_API_URL/tasks?status=waiting-for-response")) {
+    python $cliPath add-comment $task.id "Following up – please provide an update."
 }
 ```
 
@@ -98,6 +98,8 @@ skill-demo-project/
 ├── snapshots/                         # gitignored – local skill backups land here
 │   └── .gitkeep
 └── scripts/
+    ├── Get-TaskApiUrl.ps1             # ← resolve active API URL (TASK_API_URL or localhost)
+    ├── Get-SkillCliPath.ps1           # resolve installed skill CLI path
     ├── Install-SharedSkill.ps1        # gh skill install task-api-helper
     ├── Start-MockApi.ps1              # launch api/server.py in background
     ├── Invoke-BaselineScenario.ps1    # painful baseline loop (shows the problem)
@@ -119,6 +121,38 @@ skill-demo-project/
 
 ---
 
+## API URL Configuration
+
+All scripts resolve the Task API endpoint automatically via `scripts\Get-TaskApiUrl.ps1`:
+
+| Priority | Source | Value |
+|---|---|---|
+| 1 | `TASK_API_URL` env var | Deployed Azure Container App (or any remote URL) |
+| 2 | Default fallback | `http://localhost:8080` (local mock server) |
+
+### Local development (mock API)
+
+```powershell
+.\scripts\Start-MockApi.ps1         # starts mock on http://localhost:8080
+# TASK_API_URL not required – scripts fall back automatically
+```
+
+### Deployed Azure Container App (main demo path)
+
+```powershell
+$env:TASK_API_URL = "https://<your-app>.azurecontainerapps.io"
+# All scripts now target the deployed endpoint – no other changes needed
+.\scripts\Invoke-BaselineScenario.ps1
+```
+
+You can also pass `-ApiUrl` explicitly to any script:
+
+```powershell
+.\scripts\Invoke-Benchmark.ps1 -Phase before -ApiUrl "https://<your-app>.azurecontainerapps.io"
+```
+
+---
+
 ## Full Demo Command Sequence
 
 ### 0 – Install the shared skill (once per clone)
@@ -127,7 +161,9 @@ skill-demo-project/
 .\scripts\Install-SharedSkill.ps1
 ```
 
-### 1 – Start the mock API
+### 1 – Start the mock API (or set deployed URL)
+
+**Option A – local mock:**
 
 ```powershell
 .\scripts\Start-MockApi.ps1
@@ -140,6 +176,13 @@ The API runs at `http://localhost:8080`.  Verify with:
 Invoke-RestMethod http://localhost:8080/health
 ```
 
+**Option B – deployed Azure Container App:**
+
+```powershell
+$env:TASK_API_URL = "https://<your-app>.azurecontainerapps.io"
+Invoke-RestMethod "$env:TASK_API_URL/health"
+```
+
 ### 2 – See the baseline scenario in action
 
 ```powershell
@@ -148,7 +191,8 @@ Invoke-RestMethod http://localhost:8080/health
 
 This loops through all `waiting-for-response` tasks and calls
 `python task_cli.py add-comment` once per task – the slow path (one process
-spawn per task).
+spawn per task). Scripts automatically use `TASK_API_URL` if set, otherwise
+fall back to `http://localhost:8080`.
 
 ### 3 – Benchmark the baseline
 
@@ -171,7 +215,8 @@ with the experimental CLI that includes `bulk-add-comment`.
 
 ```powershell
 $cliPath = ".agents\skills\task-api-helper\scripts\task_cli.py"
-python $cliPath bulk-add-comment --status waiting-for-response --comment "Following up" --api-url http://localhost:8080
+$apiUrl  = & .\scripts\Get-TaskApiUrl.ps1
+python $cliPath bulk-add-comment --status waiting-for-response --comment "Following up" --api-url $apiUrl
 ```
 
 ### 6 – Benchmark the experiment

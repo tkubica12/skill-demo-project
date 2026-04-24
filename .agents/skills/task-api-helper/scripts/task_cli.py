@@ -17,7 +17,8 @@ DEFAULT_TIMEOUT_SECONDS = 30
 
 def build_parser() -> argparse.ArgumentParser:
     shared = argparse.ArgumentParser(add_help=False)
-    shared.add_argument("--base-url", help="Override TASK_API_BASE_URL for this command.")
+    shared.add_argument("--api-url", dest="api_url", help="Override TASK_API_URL for this command.")
+    shared.add_argument("--base-url", dest="base_url", help="Deprecated alias for --api-url.")
     shared.add_argument("--token", help="Override TASK_API_TOKEN for this command.")
 
     parser = argparse.ArgumentParser(
@@ -59,10 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Append a comment to a task.",
     )
     comment_parser.add_argument("task_id", help="Task identifier to update.")
+    comment_parser.add_argument("text", nargs="?", default=None, help="Comment text (positional).")
     comment_parser.add_argument(
         "--message",
-        required=True,
-        help="Comment text to append to the task.",
+        default=None,
+        help="Comment text (deprecated alias for positional argument).",
     )
     comment_parser.set_defaults(handler=handle_add_comment)
 
@@ -70,9 +72,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_base_url(args: argparse.Namespace) -> str:
-    base_url = (getattr(args, "base_url", None) or os.getenv("TASK_API_BASE_URL", "")).strip()
+    # --api-url takes precedence; --base-url is a deprecated alias
+    explicit = getattr(args, "api_url", None) or getattr(args, "base_url", None)
+    # TASK_API_URL is canonical; TASK_API_BASE_URL is a deprecated fallback
+    env_url = os.getenv("TASK_API_URL") or os.getenv("TASK_API_BASE_URL", "")
+    base_url = (explicit or env_url).strip()
     if not base_url:
-        raise ValueError("TASK_API_BASE_URL is not set. Pass --base-url or export TASK_API_BASE_URL.")
+        raise ValueError(
+            "TASK_API_URL is not set.\n"
+            "  Local mock:  export TASK_API_URL=http://localhost:8080\n"
+            "  Deployed:    export TASK_API_URL=https://<app>.azurecontainerapps.io\n"
+            "Or pass --api-url <url> on the command line."
+        )
     return base_url.rstrip("/")
 
 
@@ -173,11 +184,19 @@ def handle_get_task(args: argparse.Namespace) -> int:
 
 
 def handle_add_comment(args: argparse.Namespace) -> int:
+    text = getattr(args, "text", None) or getattr(args, "message", None)
+    if not text:
+        print(
+            "Error: provide comment text as a positional argument:\n"
+            "  python task_cli.py add-comment <task_id> <text>",
+            file=sys.stderr,
+        )
+        return 2
     response = request_json(
         args,
         "POST",
         f"/tasks/{parse.quote(args.task_id)}/comments",
-        payload={"message": args.message},
+        payload={"message": text},
     )
     pretty_print(response)
     return 0

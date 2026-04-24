@@ -19,6 +19,9 @@ by default.  Seed data is in `api/seed_data.json`.
 
 Start it with: `.\scripts\Start-MockApi.ps1`
 
+For a deployed endpoint, set `$env:TASK_API_URL` to the Azure Container App URL.
+`Get-TaskApiUrl.ps1` resolves the active URL automatically.
+
 Endpoints:
 - `GET  /tasks`            – list all tasks (supports `?status=<status>` query param)
 - `GET  /tasks/{id}`       – get one task
@@ -30,9 +33,12 @@ The installed skill is `task-api-helper` from `tkubica12/skills-demo-catalog`.
 It provides:
 - `task-api-helper list-tasks [--status <s>]`
 - `task-api-helper get-task <id>`
-- `task-api-helper add-comment <id> <comment>`
+- `task-api-helper add-comment <id> <text>`
 
 Install it with: `.\scripts\Install-SharedSkill.ps1`
+
+Set `TASK_API_URL` (env var) to point at local mock or deployed endpoint.
+Use `Get-TaskApiUrl.ps1` to resolve the active URL.
 
 ## The Known Pain Point
 

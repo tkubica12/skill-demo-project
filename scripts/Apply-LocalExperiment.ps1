@@ -67,10 +67,10 @@ Copy-Item -Path $expSrc -Destination $cliPath -Force
 Write-Host "Experiment applied: bulk-add-comment is now available." -ForegroundColor Green
 Write-Host ""
 Write-Host "Try it:"
-Write-Host "  `$env:TASK_API_BASE_URL = 'http://localhost:8080'"
+Write-Host "  `$env:TASK_API_URL = 'http://localhost:8080'"
 Write-Host "  python `"$cliPath`" bulk-add-comment --status waiting-for-response --comment `"Ping`""
 Write-Host ""
-Write-Host "Or pass the URL explicitly (experimental CLI uses --api-url):"
+Write-Host "Or pass the URL explicitly:"
 Write-Host "  python `"$cliPath`" bulk-add-comment --status waiting-for-response --comment `"Ping`" --api-url http://localhost:8080"
 Write-Host ""
 Write-Host "When done, restore with: .\scripts\Reset-LocalSkill.ps1"

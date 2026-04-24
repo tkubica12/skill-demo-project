@@ -20,12 +20,21 @@ Usage (after Apply-LocalExperiment.ps1 has activated it):
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 from typing import Optional
 
 DEFAULT_API_URL = "http://localhost:8080"
+
+
+def _resolve_api_url(cli_arg: str) -> str:
+    """Return the API URL: CLI flag > TASK_API_URL env > TASK_API_BASE_URL env > default."""
+    if cli_arg and cli_arg != DEFAULT_API_URL:
+        return cli_arg.rstrip("/")
+    env = (os.getenv("TASK_API_URL") or os.getenv("TASK_API_BASE_URL", "")).strip().rstrip("/")
+    return env if env else DEFAULT_API_URL
 
 
 # ---------------------------------------------------------------------------
@@ -177,16 +186,18 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    api_url = _resolve_api_url(args.api_url)
+
     try:
         if args.command == "list-tasks":
-            cmd_list_tasks(args.api_url, getattr(args, "status", None))
+            cmd_list_tasks(api_url, getattr(args, "status", None))
         elif args.command == "get-task":
-            cmd_get_task(args.api_url, args.id)
+            cmd_get_task(api_url, args.id)
         elif args.command == "add-comment":
-            cmd_add_comment(args.api_url, args.id, args.text)
+            cmd_add_comment(api_url, args.id, args.text)
         elif args.command == "bulk-add-comment":
             cmd_bulk_add_comment(
-                args.api_url,
+                api_url,
                 getattr(args, "ids", None) or [],
                 getattr(args, "status", None),
                 args.comment,

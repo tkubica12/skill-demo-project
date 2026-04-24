@@ -27,12 +27,17 @@
 [CmdletBinding()]
 param(
     [string]$Comment = "Following up – please provide a status update.",
-    [string]$ApiUrl  = "http://localhost:8080",
+    [string]$ApiUrl  = "",
     [string]$Status  = "waiting-for-response"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Resolve API URL: explicit param → TASK_API_URL env → local mock fallback
+if (-not $ApiUrl) {
+    $ApiUrl = & (Join-Path $PSScriptRoot "Get-TaskApiUrl.ps1")
+}
 
 Write-Host "=== Baseline Scenario ===" -ForegroundColor Yellow
 Write-Host "Fetching tasks with status '$Status' from $ApiUrl ..."
@@ -67,10 +72,10 @@ Write-Host "Found $($tasks.Count) task(s). Commenting on each via the installed 
 
 $start = [System.Diagnostics.Stopwatch]::StartNew()
 
-$env:TASK_API_BASE_URL = $ApiUrl
+$env:TASK_API_URL = $ApiUrl
 foreach ($task in $tasks) {
     Write-Host "  → python task_cli.py add-comment $($task.id) ..." -NoNewline
-    & $pythonCmd.Source $cliPath add-comment $task.id --message $Comment 2>&1 | Out-Null
+    & $pythonCmd.Source $cliPath add-comment $task.id $Comment 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Host " FAILED (exit $LASTEXITCODE)" -ForegroundColor Red
     } else {
