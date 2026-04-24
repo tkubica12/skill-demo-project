@@ -68,7 +68,8 @@ $issueUrl = gh issue create `
     --repo  $CatalogRepo `
     --title $Title `
     --body  $fullBody `
-    --label "enhancement" 2>&1
+    --label "skill-enhancement" `
+    --label "needs-triage" 2>&1
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to create GitHub issue: $issueUrl"

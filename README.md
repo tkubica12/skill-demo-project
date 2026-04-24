@@ -57,7 +57,7 @@ When you (or a Copilot agent) identify a gap:
 ```
 
 This will:
-- Create a GitHub issue in `tkubica12/skills-demo-catalog` labelled `enhancement`.
+- Create a GitHub issue in `tkubica12/skills-demo-catalog` labelled `skill-enhancement` and `needs-triage`.
 - Append the issue number, URL, title, skill name, and timestamp to `skill-enhancement-tracker.json`.
 - Print the `git` command to commit and push the updated tracker.
 
