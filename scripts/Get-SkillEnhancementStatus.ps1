@@ -49,9 +49,15 @@ if ($tracker.enhancements.Count -eq 0) {
 # Fetch catalog releases once (best-effort; skip if gh fails or repo has none)
 $catalogReleases = @()
 try {
-    $relJson = gh release list --repo $CatalogRepo --json "tagName,name,body,publishedAt" --limit 50 2>&1
+    $tagList = gh release list --repo $CatalogRepo --json "tagName,publishedAt" --limit 50 2>&1
     if ($LASTEXITCODE -eq 0) {
-        $catalogReleases = $relJson | ConvertFrom-Json
+        $tags = $tagList | ConvertFrom-Json
+        foreach ($t in $tags) {
+            $viewJson = gh release view $t.tagName --repo $CatalogRepo --json "tagName,name,body,publishedAt" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $catalogReleases += ($viewJson | ConvertFrom-Json)
+            }
+        }
     }
 } catch {
     # Non-fatal: release scanning is best-effort
@@ -102,10 +108,11 @@ foreach ($entry in $tracker.enhancements) {
         }
 
         if ($UpdateFile -and $entry.status -ne "resolved") {
-            $entry.status    = "resolved"
-            $entry.closed_at = $closedAt
+            $entry.status = "resolved"
+            # Add-Member handles both new and existing NoteProperties safely
+            $entry | Add-Member -NotePropertyName "closed_at"       -NotePropertyValue $closedAt          -Force
             if ($fixRelease) {
-                $entry.fixed_in_release = $fixRelease.tagName
+                $entry | Add-Member -NotePropertyName "fixed_in_release" -NotePropertyValue $fixRelease.tagName -Force
             }
             $anyChanges = $true
         }
