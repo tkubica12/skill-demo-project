@@ -76,22 +76,26 @@ Benchmark run on $($before.timestamp).
 "@
 }
 
+$cliRelPath = ".agents\skills\task-api-helper\scripts\task_cli.py"
+
 # ------------------------------------------------------------------
 # Compose issue body
 # ------------------------------------------------------------------
 $body = @"
 ## Summary
 
-The \`$SkillName\` skill currently provides \`add-comment <id> <text>\` which
-operates on a single task per invocation.
+The \`$SkillName\` skill currently provides \`add-comment <id> --message <text>\`
+which operates on a single task per invocation.
 
 A common real-world need is: **post the same comment on every task in a given
 status** (e.g., \`waiting-for-response\`).  The only current approach is a loop
-that spawns a new process for every task:
+that spawns a new Python process for every task:
 
 \`\`\`powershell
-foreach (\$task in (task-api-helper list-tasks --status waiting-for-response | ConvertFrom-Json)) {
-    task-api-helper add-comment \$task.id "Following up."
+# Invoke the installed skill CLI once per task (slow path)
+\$cliPath = "$cliRelPath"
+foreach (\$task in (Invoke-RestMethod "http://localhost:8080/tasks?status=waiting-for-response")) {
+    python "\$cliPath" add-comment \$task.id --message "Following up."
 }
 \`\`\`
 
@@ -102,7 +106,7 @@ Each iteration carries the full process-startup and connection overhead.
 Add a \`bulk-add-comment\` sub-command:
 
 \`\`\`
-task-api-helper bulk-add-comment (--ids <id>... | --status <status>) --comment <text>
+python task_cli.py bulk-add-comment (--ids <id>... | --status <status>) --message <text>
 \`\`\`
 
 This opens a single process, resolves the task list once, and posts all
@@ -122,6 +126,7 @@ commands.
 
 **Repository:** tkubica12/skill-demo-project
 **Skill installed:** \`$SkillName\` from \`$CatalogRepo\`
+**Skill CLI path (post-install):** \`$cliRelPath\`
 "@
 
 # ------------------------------------------------------------------

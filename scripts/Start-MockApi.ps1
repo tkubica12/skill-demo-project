@@ -45,22 +45,22 @@ if (-not $pythonCmd) {
     exit 1
 }
 
-$args = @($serverPy, "--port", $Port, "--host", $ApiHost)
+$serverArgs = @($serverPy, "--port", $Port, "--host", $ApiHost)
 
 if ($Foreground) {
-    Write-Host "Starting Mock Task API on http://$ApiHost:$Port (foreground) ..." -ForegroundColor Cyan
-    & $pythonCmd.Source @args
+    Write-Host "Starting Mock Task API on http://$($ApiHost):$($Port) (foreground) ..." -ForegroundColor Cyan
+    & $pythonCmd.Source @serverArgs
 } else {
-    Write-Host "Starting Mock Task API on http://$ApiHost:$Port (background job) ..." -ForegroundColor Cyan
+    Write-Host "Starting Mock Task API on http://$($ApiHost):$($Port) (background job) ..." -ForegroundColor Cyan
     $job = Start-Job -ScriptBlock {
         param($py, $sArgs)
         & $py @sArgs
-    } -ArgumentList $pythonCmd.Source, $args
+    } -ArgumentList $pythonCmd.Source, $serverArgs
 
     # Wait briefly and check the API is responsive
     Start-Sleep -Seconds 2
     try {
-        $resp = Invoke-RestMethod "http://$ApiHost:$Port/health" -ErrorAction Stop
+        $resp = Invoke-RestMethod "http://$($ApiHost):$($Port)/health" -ErrorAction Stop
         Write-Host "API is up: $($resp | ConvertTo-Json -Compress)" -ForegroundColor Green
     } catch {
         Write-Warning "API did not respond within 2 s. Check job output:"

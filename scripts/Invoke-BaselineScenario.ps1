@@ -37,7 +37,20 @@ $ErrorActionPreference = "Stop"
 Write-Host "=== Baseline Scenario ===" -ForegroundColor Yellow
 Write-Host "Fetching tasks with status '$Status' from $ApiUrl ..."
 
-# Fetch tasks via the API directly (the skill may or may not be installed)
+# Require the installed skill CLI
+$cliPath = & (Join-Path $PSScriptRoot "Get-SkillCliPath.ps1")
+if (-not $cliPath) { exit 1 }
+
+# Resolve Python interpreter
+$pythonCmd = (Get-Command python -ErrorAction SilentlyContinue) `
+           ?? (Get-Command python3 -ErrorAction SilentlyContinue)
+if (-not $pythonCmd) {
+    Write-Error "Python not found. Install Python 3.9+ and ensure it is on PATH."
+    exit 1
+}
+
+# Fetch task list via direct REST (CLI list-tasks is for Copilot use; the
+# baseline loop itself exercises add-comment via the installed CLI)
 try {
     $tasks = Invoke-RestMethod "$ApiUrl/tasks?status=$Status" -ErrorAction Stop
 } catch {
@@ -50,24 +63,19 @@ if ($tasks.Count -eq 0) {
     exit 0
 }
 
-Write-Host "Found $($tasks.Count) task(s). Commenting on each individually (baseline)..." -ForegroundColor Cyan
+Write-Host "Found $($tasks.Count) task(s). Commenting on each via the installed CLI (baseline – one process per task)..." -ForegroundColor Cyan
 
 $start = [System.Diagnostics.Stopwatch]::StartNew()
 
+$env:TASK_API_BASE_URL = $ApiUrl
 foreach ($task in $tasks) {
-    Write-Host "  → add-comment $($task.id) ..." -NoNewline
-
-    # Prefer the installed skill; fall back to direct API call
-    $skillAvailable = Get-Command "task-api-helper" -ErrorAction SilentlyContinue
-    if ($skillAvailable) {
-        task-api-helper add-comment $task.id $Comment --api-url $ApiUrl 2>&1 | Out-Null
+    Write-Host "  → python task_cli.py add-comment $($task.id) ..." -NoNewline
+    & $pythonCmd.Source $cliPath add-comment $task.id --message $Comment 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host " FAILED (exit $LASTEXITCODE)" -ForegroundColor Red
     } else {
-        $body = @{ text = $Comment } | ConvertTo-Json
-        Invoke-RestMethod "$ApiUrl/tasks/$($task.id)/comments" `
-            -Method POST -ContentType "application/json" -Body $body | Out-Null
+        Write-Host " done" -ForegroundColor Green
     }
-
-    Write-Host " done" -ForegroundColor Green
 }
 
 $start.Stop()

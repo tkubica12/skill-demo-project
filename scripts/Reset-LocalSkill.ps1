@@ -23,8 +23,9 @@ $pointerFile = Join-Path $snapDir "latest_snapshot.txt"
 if (-not (Test-Path $pointerFile)) {
     Write-Warning "No snapshot pointer found at $pointerFile."
     Write-Warning "Either the experiment was never applied, or snapshots/ was cleaned."
-    Write-Host "Falling back to re-installing the skill..." -ForegroundColor Yellow
-    & (Join-Path $PSScriptRoot "Install-SharedSkill.ps1")
+    Write-Host ""
+    Write-Host "If you need to restore the skill to a clean state, re-install it:" -ForegroundColor Yellow
+    Write-Host "  .\scripts\Install-SharedSkill.ps1"
     return
 }
 
@@ -34,8 +35,8 @@ $snapshotPath = $lines[1].Trim()
 
 if (-not (Test-Path $snapshotPath)) {
     Write-Error "Snapshot file not found: $snapshotPath  (snapshots/ is gitignored – was it cleaned?)"
-    Write-Host "Falling back to re-installing the skill..." -ForegroundColor Yellow
-    & (Join-Path $PSScriptRoot "Install-SharedSkill.ps1")
+    Write-Host "Re-install the skill to restore it to a clean state:" -ForegroundColor Yellow
+    Write-Host "  .\scripts\Install-SharedSkill.ps1"
     return
 }
 

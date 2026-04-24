@@ -40,28 +40,55 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
+# ------------------------------------------------------------------
+# Shared helpers
+# ------------------------------------------------------------------
+
+function Get-Python {
+    $cmd = (Get-Command python -ErrorAction SilentlyContinue) `
+         ?? (Get-Command python3 -ErrorAction SilentlyContinue)
+    if (-not $cmd) { throw "Python not found. Install Python 3.9+ and add it to PATH." }
+    return $cmd.Source
+}
+
 function Measure-Baseline {
-    param([array]$Tasks, [string]$ApiUrl, [string]$Comment)
+    <#
+    Times the painful per-task loop: one 'python task_cli.py add-comment' invocation
+    per task. This is the real baseline cost – each call spawns a new Python process,
+    pays connection overhead, and shuts down.
+    #>
+    param(
+        [array]  $Tasks,
+        [string] $ApiUrl,
+        [string] $Comment,
+        [string] $CliPath,
+        [string] $PythonExe
+    )
+    $env:TASK_API_BASE_URL = $ApiUrl
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     foreach ($task in $Tasks) {
-        $body = @{ text = $Comment } | ConvertTo-Json
-        Invoke-RestMethod "$ApiUrl/tasks/$($task.id)/comments" `
-            -Method POST -ContentType "application/json" -Body $body | Out-Null
+        & $PythonExe $CliPath add-comment $task.id --message $Comment | Out-Null
     }
     $sw.Stop()
     return $sw.Elapsed.TotalSeconds
 }
 
 function Measure-BulkExperiment {
-    param([array]$Tasks, [string]$ApiUrl, [string]$Comment, [string]$CliPath)
-    $ids = $Tasks | ForEach-Object { $_.id }
-    $sw  = [System.Diagnostics.Stopwatch]::StartNew()
-
-    $pythonCmd = (Get-Command python -ErrorAction SilentlyContinue) `
-               ?? (Get-Command python3 -ErrorAction SilentlyContinue)
-    if (-not $pythonCmd) { throw "Python not found." }
-
-    & $pythonCmd.Source $CliPath bulk-add-comment --ids @ids --comment $Comment --api-url $ApiUrl | Out-Null
+    <#
+    Times the experimental bulk-add-comment: a single Python process invocation
+    that resolves the task list and posts all comments in one session.
+    Requires Apply-LocalExperiment.ps1 to have been run first.
+    The experimental CLI uses --api-url (not --base-url).
+    #>
+    param(
+        [string] $ApiUrl,
+        [string] $Status,
+        [string] $Comment,
+        [string] $CliPath,
+        [string] $PythonExe
+    )
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    & $PythonExe $CliPath bulk-add-comment --status $Status --comment $Comment --api-url $ApiUrl | Out-Null
     $sw.Stop()
     return $sw.Elapsed.TotalSeconds
 }
@@ -98,20 +125,35 @@ try {
 Write-Host "=== Benchmark: Phase=$Phase, Tasks=$($tasks.Count) ===" -ForegroundColor Cyan
 
 if ($Phase -eq "before") {
-    Write-Host "Timing baseline loop (one CLI call per task) ..."
-    $elapsed = Measure-Baseline -Tasks $tasks -ApiUrl $ApiUrl -Comment $Comment
-} else {
-    # Phase = after; experimental CLI must be active
-    $cmd = Get-Command "task-api-helper" -ErrorAction SilentlyContinue
-    $cliPath = if ($cmd) { $cmd.Source } else {
-        Join-Path $repoRoot ".github\copilot\skills\task-api-helper\task_cli.py"
+    Write-Host "Timing baseline loop (one CLI process per task) ..."
+    $pyExe   = Get-Python
+    $cliPath = & (Join-Path $PSScriptRoot "Get-SkillCliPath.ps1")
+    if (-not $cliPath) {
+        Write-Error "Cannot locate installed skill CLI. Run Install-SharedSkill.ps1 first."
+        exit 1
     }
-    if (-not (Test-Path $cliPath)) {
-        Write-Error "Experimental CLI not found at $cliPath. Run Apply-LocalExperiment.ps1 first."
+    $elapsed = Measure-Baseline -Tasks $tasks -ApiUrl $ApiUrl -Comment $Comment `
+                                -CliPath $cliPath -PythonExe $pyExe
+} else {
+    # Phase = after; experimental CLI must be active (Apply-LocalExperiment.ps1 run first)
+    $cliPath = & (Join-Path $PSScriptRoot "Get-SkillCliPath.ps1")
+    if (-not $cliPath) {
+        Write-Error "Cannot locate skill CLI. Run Install-SharedSkill.ps1 then Apply-LocalExperiment.ps1."
+        exit 1
+    }
+    $pyExe = Get-Python
+    # Verify bulk-add-comment is available (i.e. experiment has been applied)
+    $helpOutput = & $pyExe $cliPath --help 2>&1
+    if ($helpOutput -notmatch "bulk-add-comment") {
+        Write-Error @"
+bulk-add-comment not found in the installed CLI.
+Apply the local experiment first:  .\scripts\Apply-LocalExperiment.ps1
+"@
         exit 1
     }
     Write-Host "Timing bulk-add-comment (single invocation) ..."
-    $elapsed = Measure-BulkExperiment -Tasks $tasks -ApiUrl $ApiUrl -Comment $Comment -CliPath $cliPath
+    $elapsed = Measure-BulkExperiment -ApiUrl $ApiUrl -Status $Status -Comment $Comment `
+                                       -CliPath $cliPath -PythonExe $pyExe
 }
 
 $result = [PSCustomObject]@{

@@ -38,7 +38,16 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Skill '$SkillName' installed successfully." -ForegroundColor Green
-Write-Host "Available commands:"
-Write-Host "  task-api-helper list-tasks [--status <status>]"
-Write-Host "  task-api-helper get-task <id>"
-Write-Host "  task-api-helper add-comment <id> <comment>"
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$cliPath  = Join-Path $repoRoot ".agents\skills\task-api-helper\scripts\task_cli.py"
+
+Write-Host ""
+Write-Host "The CLI is installed at:"
+Write-Host "  $cliPath" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Invoke it via Python (it is NOT a global shell command):"
+Write-Host "  `$env:TASK_API_BASE_URL = 'http://localhost:8080'"
+Write-Host "  python `"$cliPath`" list-tasks [--status <status>]"
+Write-Host "  python `"$cliPath`" get-task <id>"
+Write-Host "  python `"$cliPath`" add-comment <id> --message `"<text>`""

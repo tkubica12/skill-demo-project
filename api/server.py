@@ -112,14 +112,15 @@ class TaskHandler(BaseHTTPRequestHandler):
                     self._send_error(404, f"Task '{task_id}' not found")
                     return
                 body = self._read_body()
-                text = body.get("text", "").strip()
+                # Accept "message" (canonical API contract) or "text" (legacy alias)
+                text = (body.get("message") or body.get("text", "")).strip()
                 if not text:
-                    self._send_error(400, "'text' field is required")
+                    self._send_error(400, "'message' (or 'text') field is required")
                     return
                 comment = {
                     "id": f"c-{uuid.uuid4().hex[:8]}",
                     "author": body.get("author", "agent"),
-                    "text": text,
+                    "message": text,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 TASKS[task_id].setdefault("comments", []).append(comment)

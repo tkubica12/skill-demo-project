@@ -13,13 +13,19 @@ workflow that a team follows when a gap in a shared skill is discovered.
 
 Your organisation maintains a **central skill catalog** (`tkubica12/skills-demo-catalog`).  
 One published skill is `task-api-helper`, which Copilot uses to interact with task
-management APIs.  It exposes three commands:
+management APIs. After `gh skill install` the skill lands at:
 
-| Command | What it does |
+```
+.agents\skills\task-api-helper\scripts\task_cli.py
+```
+
+It exposes three commands — invoked via Python, **not** as a global shell command:
+
+| Invocation | What it does |
 |---|---|
-| `task-api-helper list-tasks [--status <s>]` | List tasks (optionally filtered by status) |
-| `task-api-helper get-task <id>` | Fetch details of one task |
-| `task-api-helper add-comment <id> <text>` | Post a comment on a single task |
+| `python task_cli.py list-tasks [--status <s>]` | List tasks (optionally filtered by status) |
+| `python task_cli.py get-task <id>` | Fetch details of one task |
+| `python task_cli.py add-comment <id> --message <text>` | Post a comment on a single task |
 
 ### The Pain Point – missing `bulk-add-comment`
 
@@ -29,14 +35,16 @@ status is `waiting-for-response`."**
 With the baseline skill this requires a per-task loop:
 
 ```powershell
-foreach ($task in (task-api-helper list-tasks --status waiting-for-response | ConvertFrom-Json)) {
-    task-api-helper add-comment $task.id "Following up – please provide an update."
+$cliPath = ".agents\skills\task-api-helper\scripts\task_cli.py"
+$env:TASK_API_BASE_URL = "http://localhost:8080"
+foreach ($task in (Invoke-RestMethod "http://localhost:8080/tasks?status=waiting-for-response")) {
+    python $cliPath add-comment $task.id --message "Following up – please provide an update."
 }
 ```
 
-Every iteration spawns a process, authenticates, and opens a connection.
-With 5+ tasks the latency is noticeable. A `bulk-add-comment` command would
-post all comments in a single process invocation.
+Every iteration spawns a Python process, pays startup overhead, and opens a
+connection. With 5+ tasks the latency is noticeable. A `bulk-add-comment`
+command would post all comments in a single process invocation.
 
 ---
 
@@ -138,8 +146,9 @@ Invoke-RestMethod http://localhost:8080/health
 .\scripts\Invoke-BaselineScenario.ps1
 ```
 
-This loops through all `waiting-for-response` tasks and calls `add-comment` once
-per task – the slow path.
+This loops through all `waiting-for-response` tasks and calls
+`python task_cli.py add-comment` once per task – the slow path (one process
+spawn per task).
 
 ### 3 – Benchmark the baseline
 
@@ -161,7 +170,8 @@ with the experimental CLI that includes `bulk-add-comment`.
 ### 5 – Run the improved scenario
 
 ```powershell
-task-api-helper bulk-add-comment --status waiting-for-response --comment "Following up"
+$cliPath = ".agents\skills\task-api-helper\scripts\task_cli.py"
+python $cliPath bulk-add-comment --status waiting-for-response --comment "Following up" --api-url http://localhost:8080
 ```
 
 ### 6 – Benchmark the experiment

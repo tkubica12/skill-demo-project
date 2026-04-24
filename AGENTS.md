@@ -11,12 +11,36 @@ This project hosts a **mock task-management REST API** and consumes the shared
 `task-api-helper` skill from the central catalog
 [tkubica12/skills-demo-catalog](https://github.com/tkubica12/skills-demo-catalog).
 
-The installed skill exposes three CLI commands:
-| Command | Description |
+`gh skill install` places the skill files at:
+
+```
+.agents\skills\task-api-helper\
+    SKILL.md
+    references\
+    scripts\
+        task_cli.py          ← the CLI wrapper — invoke via Python, NOT as a shell command
+```
+
+The CLI is **NOT** added to PATH. Always invoke it through Python:
+
+```powershell
+$env:TASK_API_BASE_URL = "http://localhost:8080"
+python ".agents\skills\task-api-helper\scripts\task_cli.py" list-tasks
+```
+
+| Sub-command | Example |
 |---|---|
-| `task-api-helper list-tasks [--status <status>]` | List tasks, optionally filtered by status |
-| `task-api-helper get-task <id>` | Fetch details of one task |
-| `task-api-helper add-comment <id> <comment>` | Post a comment on a single task |
+| `list-tasks [--status <s>]` | `python task_cli.py list-tasks --status open` |
+| `get-task <id>` | `python task_cli.py get-task task-001` |
+| `add-comment <id> --message <text>` | `python task_cli.py add-comment task-001 --message "Ping"` |
+
+Use the helper script to resolve the path reliably:
+
+```powershell
+$cliPath = & .\scripts\Get-SkillCliPath.ps1
+if (-not $cliPath) { exit 1 }
+python $cliPath list-tasks
+```
 
 ---
 
@@ -28,24 +52,27 @@ whose status is `waiting-for-response`."**
 With the current skill this requires a loop:
 
 ```powershell
-foreach ($task in (task-api-helper list-tasks --status waiting-for-response | ConvertFrom-Json)) {
-    task-api-helper add-comment $task.id "Following up – please provide an update."
+$cliPath = ".agents\skills\task-api-helper\scripts\task_cli.py"
+$env:TASK_API_BASE_URL = "http://localhost:8080"
+foreach ($task in (Invoke-RestMethod "http://localhost:8080/tasks?status=waiting-for-response")) {
+    python $cliPath add-comment $task.id --message "Following up – please provide an update."
 }
 ```
 
-Every iteration spawns a new process, authenticates, opens a TCP connection,
-and closes it.  With many tasks this is noticeably slow.
+Every iteration spawns a new Python process, pays startup overhead, opens a TCP
+connection, and closes it. With many tasks this is noticeably slow.
 
 **The missing capability is `bulk-add-comment`** – a single command that accepts
-multiple task IDs and a shared comment text, processes all in one session.
+a status filter or explicit IDs and posts all comments in one session.
 
 ---
 
 ## Normal Workflow (prefer the central skill)
 
-1. Start the mock API:  `.\scripts\Start-MockApi.ps1`
-2. Use `task-api-helper list-tasks`, `get-task`, `add-comment` normally.
-3. If you find a gap or pain point, **do not edit the installed skill directly**.
+1. Install the skill:     `.\scripts\Install-SharedSkill.ps1`
+2. Start the mock API:    `.\scripts\Start-MockApi.ps1`
+3. Use the CLI via Python (`$cliPath = & .\scripts\Get-SkillCliPath.ps1`).
+4. If you find a gap or pain point, **do not edit the installed skill directly**.
    Instead follow the Experiment & Issue workflow below.
 
 ---
@@ -61,8 +88,8 @@ not support well, follow these steps **in order**:
 .\scripts\Invoke-Benchmark.ps1 -Phase before
 ```
 
-This times how long the baseline loop takes and saves results to
-`benchmark-results-before.json`.
+This times the per-task CLI loop (one Python process per task) and saves results
+to `benchmark-results-before.json`.
 
 ### Step 2 – Apply the local experiment
 
@@ -71,7 +98,8 @@ This times how long the baseline loop takes and saves results to
 ```
 
 This script:
-- Snapshots the currently installed skill binary to `snapshots/` (gitignored).
+- Requires the skill to be installed (fails with a clear message if not).
+- Snapshots the currently installed `task_cli.py` to `snapshots/` (gitignored).
 - Copies `experiments\bulk_add_comment\task_cli_experimental.py` over the
   installed skill entry-point so the new `bulk-add-comment` sub-command is
   available.
@@ -97,10 +125,9 @@ comparison.
 ```
 
 This script:
-- Creates a detailed GitHub issue in `tkubica12/skills-demo-catalog` with the
+- Creates a detailed GitHub issue in `tkubica12/skills-demo-catalog` with
   benchmark data, motivation, and the experimental implementation as evidence.
 - Appends the issue ID, URL, and metadata to `skill-improvement-log.json`.
-- Prints the git command to commit the updated tracker.
 
 **Commit and push the tracker after running the script:**
 
@@ -116,7 +143,7 @@ git push
 .\scripts\Reset-LocalSkill.ps1
 ```
 
-Restores the installed skill binary from the snapshot.
+Restores the installed skill from the snapshot.
 **Always run this step** – the experiment is evidence, not a permanent fix.
 
 ### Step 6 – Monitor resolution
@@ -126,7 +153,7 @@ Restores the installed skill binary from the snapshot.
 ```
 
 Checks whether any tracked issues in `skill-improvement-log.json` have been
-closed.  When the catalog ships a new release that includes `bulk-add-comment`,
+closed. When the catalog ships a new release that includes `bulk-add-comment`,
 re-run:
 
 ```powershell
@@ -140,6 +167,8 @@ git add skill-improvement-log.json && git commit -m "tracker: resolved issue #<N
 ## Key Principles
 
 - **Prefer the central skill.** Local overrides are temporary evidence only.
+- **The CLI is not a shell command.** Always invoke via `python task_cli.py ...`.
+- **Use `Get-SkillCliPath.ps1`** to resolve the canonical CLI path.
 - **Benchmark before and after.** Numbers justify the upstream issue.
 - **File an issue, not a PR.** The catalog has maintainers; respect their process.
 - **Always restore.** Never leave the installed skill in a patched state after the demo.
@@ -160,17 +189,19 @@ git add skill-improvement-log.json && git commit -m "tracker: resolved issue #<N
 # 2. Run the painful baseline scenario (shows the problem)
 .\scripts\Invoke-BaselineScenario.ps1
 
-# 3. Benchmark the baseline
+# 3. Benchmark the baseline (one CLI process per task)
 .\scripts\Invoke-Benchmark.ps1 -Phase before
 
-# 4. Apply local experiment
+# 4. Apply local experiment (overwrites installed task_cli.py reversibly)
 .\scripts\Apply-LocalExperiment.ps1
 
 # 5. Run the experiment scenario (shows the improvement)
-task-api-helper bulk-add-comment --status waiting-for-response --comment "Following up"
+$cliPath = ".agents\skills\task-api-helper\scripts\task_cli.py"
+python $cliPath bulk-add-comment --status waiting-for-response --comment "Following up" --api-url http://localhost:8080
 
 # 6. Benchmark the experiment
 .\scripts\Invoke-Benchmark.ps1 -Phase after
+.\scripts\Invoke-Benchmark.ps1 -Phase compare
 
 # 7. File upstream issue with evidence
 .\scripts\New-UpstreamIssue.ps1 -Title "Add bulk-add-comment to task-api-helper" `
@@ -183,3 +214,4 @@ git add skill-improvement-log.json && git commit -m "track: upstream issue" && g
 # 9. Restore local skill to pristine state
 .\scripts\Reset-LocalSkill.ps1
 ```
+
